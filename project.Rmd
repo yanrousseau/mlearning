@@ -1,0 +1,127 @@
+---
+title: "Technique detection using a machine learning algorithm"
+author: "Yannick Rousseau"
+date: "May 21, 2016"
+output: html_document
+---
+
+### Introduction
+
+This script seeks to predict the manner in which 6 participants of a study accomplisedh a physical exercise (dumbell lift). A total of 160 variables can be used to make a prediction, some of which contain emppty data. Two datasets are provided. The first one contains 19622 records and is used to build and validate a model. The second one contains only 20 records and is used to make predictions for which the classe is unknown.
+
+### Load libraries
+
+```{r results='hide', message=FALSE, warning=FALSE}
+# Load libraries.
+library(caret)
+library(randomForest)
+
+# Set the option to prevent scientific notation.
+options(scipen=999)
+```
+
+### Download data locally
+
+Note that the download commands below were commented to avoid downloading the data files each time the script is tested or upgraded.
+
+```{r}
+wd <- paste0("d:\\doc\\Education\\JH-DataScience\\8. Practical machine ",
+             "learning\\Week #4\\Lesson #3 - Course project\\")
+urlTrain  <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+urlTest   <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+pathTrain <- paste0(wd,"pml-training.csv")
+pathTest  <- paste0(wd,"pml-testing.csv" )
+#download.file(urlTrain, destfile=pathTrain)
+#download.file(urlTest,  destfile=pathTest )
+dateDownloaded <- date()
+```
+
+### Load data
+
+Note that no filtering is done at this point. The incomplete rows and/or columns are dealt with at later stage.
+
+```{r}
+dfTrain  <- data.frame(read.csv(pathTrain, stringsAsFactors=FALSE))
+dfTest   <- data.frame(read.csv(pathTest , stringsAsFactors=FALSE))
+```
+
+### Load and clean data sets
+
+There are 4 steps in this section:
+
+1. Remove the columns with empty values. This is probably a better approach than removing incomplete rows since we want to maximize the number of records available when building a model.
+2. Determine if columns should be dropped (if all rows have the same value). This ended up not being required since there are at least 2 different values for each variable.
+3. Remove the columns whose purpose is only to dentify record.
+4. Only use a fraction of the provided training set (25%) to obtain a reasonable computation time. Then split the remainding records into two subsets: the first one will be used to train the data (75% of records) and the second will serve in cross-validation, i.e. to evaluate the capacity of the model to make predictions.
+
+```{r}
+# Step #1. Select the records without an empty cell. 
+dfTrainEmpty <-
+  apply(dfTrain, 2, function(val)
+        {sum(is.na(val) | (val=="#DIV/0!") | (gsub(" ","",val)==""))})
+dfTrain <- dfTrain[,which(dfTrainEmpty == 0)]
+dfTest  <- dfTest [,which(dfTrainEmpty == 0)]
+
+# Step #2. Determine the number of distinct values in each column then select
+# the columns with more than one value.
+vars <- names(dfTrain)
+dfVars <- data.frame(id=seq(1, length(vars), by=1), var=vars,
+          unique=sapply(lapply(dfTrain[names(dfTrain)], unique), length) == 1)
+dfVars <- dfVars[dfVars$unique==FALSE,]
+row.names(dfVars) <- seq(1, nrow(dfVars), by=1)
+if (sum(dfVars$unique > 0)) {
+  dfTrain <- dfTrain[,dfVars$id]
+}
+
+# Step #3. Select all columns, except the first 7 ones.
+dfTrain <- dfTrain[,8:ncol(dfTrain)]
+dfTest  <- dfTest [,8:ncol(dfTest )]
+
+# Step #4. Reduce training set and create a cross-validation set.
+set.seed(12345)
+inTrain <- createDataPartition(y=dfTrain$classe, p=0.25, list=FALSE)
+dfTrain <- dfTrain[ inTrain, ]
+inTrain <- createDataPartition(y=dfTrain$classe, p=0.75, list=FALSE)
+dfCV    <- dfTrain[-inTrain, ]
+dfTrain <- dfTrain[ inTrain, ]
+```
+
+### Calibrate model
+
+Several methods were employed to obtain as high accuracy as possible. The method that worked best, i.e. random forest, was selected to build the model. The other methods tried did not result in as high accuracy. For instance, using 10% of the initial training set, the generalized boosted regression model resulted in slightly lower accuracy (0.90 instead of 0.92 for random forest). However, tree classification was judged not suitable with an accuracy of 0.51. After trying 8 different models, the random forest algorithm was selected for the later steps.
+
+```{r}
+fit <- train(classe~., data=dfTrain, method="rf")
+fit$finalModel
+```
+
+### Validate model
+
+The cross-validation set was used to verify the accuracy and error associated with the model.
+
+```{r}
+predCV   <- predict(fit, dfCV)
+acc      <- confusionMatrix(predCV, dfCV$classe)$overall[["Accuracy"]]
+oosError <- 1 - (sum(predCV==dfCV$classe) / length(predCV))
+```
+
+The accuracy is `r format(round(acc*100.0, digits=2), nsmall=2)`%.
+The out-of-sample error is `r format(round(oosError*100.0, digits=2), nsmall=2)`%.
+The confusion matrix, shown below, reveals the agreement between the predictions and true values.
+
+```{r}
+table(predCV, dfCV$classe)
+```
+
+### Prediction
+
+Using the validated model, a prediction is done for each record in the test data set. The predicted values are shown below.
+
+```{r}
+predTest <- predict(fit, dfTest)
+data.frame(prediction=predTest)
+```
+
+### Conclusion
+
+The fraction of the initial training set used to train the data was varied. The first attempt (10% of records) resulted in 17/20 correct predictions. The second attempt (25% of records) resulted in 19/20 correct predictions. It is likely that the complete training set would result in only correct predictions. Overall, a combination of data cleaning and a single machine learning algorithm was able to perform good predictions.
